@@ -11,7 +11,7 @@ HOST = '0.0.0.0'
 PORT = 5555
 MAX_PLAYERS = 3
 SERVER_TICK_RATE = 30
-GAME_DURATION = 180 # Durasi game 3 menit (dalam detik)
+GAME_DURATION = 180  # Durasi game 3 menit (dalam detik)
 
 # --- Konfigurasi Game ---
 ARENA_WIDTH = 800
@@ -19,13 +19,13 @@ ARENA_HEIGHT = 600
 PLAYER_RADIUS = 25
 ITEM_RADIUS = 15
 PLAYER_SPEED = 4
-TAG_IMMUNITY_DURATION = 3 # Durasi kekebalan setelah di-tag (dalam detik)
+TAG_IMMUNITY_DURATION = 3  # Durasi kekebalan setelah di-tag (dalam detik)
 
 # --- Pengaturan Item ---
 ITEM_TYPES = ['speed_boost', 'banana_trap']
 MAX_ITEMS = 5
 ITEM_SPAWN_INTERVAL = 5
-ITEM_EFFECT_DURATION = { 'speed_boost': 5, 'stun': 2 }
+ITEM_EFFECT_DURATION = {'speed_boost': 5, 'stun': 2}
 BANANA_ARM_TIME = 0.5
 
 # --- Status Game Global ---
@@ -37,15 +37,36 @@ game_state = {
     'winner': None,
     'game_over_timer': 0
 }
+# **PERUBAHAN**: Menyimpan data pemain yang jarang berubah (termasuk avatar)
+static_player_data = {}
 player_inputs = {}
-clients = []
+# **PERUBAHAN**: Menggunakan dictionary untuk mengelola klien {player_id: conn}
+clients = {}
 lock = threading.Lock()
 last_item_spawn_time = time.time()
 last_score_update_time = time.time()
 game_start_time = 0
 
+
 def distance(p1, p2):
     return ((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)**0.5
+
+# **FUNGSI BARU**: Mengirim data dengan aman ke satu klien
+def send_to_client(conn, data):
+    try:
+        payload = pickle.dumps(data)
+        message = f"{len(payload):<10}".encode() + payload
+        conn.sendall(message)
+    except (ConnectionResetError, BrokenPipeError):
+        # Koneksi sudah ditutup oleh klien, akan ditangani di loop utama klien
+        pass
+
+# **FUNGSI BARU**: Menyiarkan data ke semua klien yang terhubung
+def broadcast(data):
+    with lock:
+        for pid, conn in list(clients.items()):
+            send_to_client(conn, data)
+
 
 def receive_from_client(conn):
     try:
@@ -68,25 +89,38 @@ def receive_from_client(conn):
     except (ValueError, pickle.UnpicklingError, ConnectionResetError, EOFError):
         return None
 
+
 def handle_client(conn, player_id):
     global player_inputs
     print(f"[Koneksi] Pemain {player_id} mencoba terhubung...")
 
     try:
-        conn.send(str(player_id).encode())
+        # 1. Kirim ID pemain baru ke kliennya
+        send_to_client(conn, {'type': 'your_id', 'id': player_id})
+
+        # 2. Kirim data semua pemain yang sudah ada ke klien baru
+        send_to_client(conn, {'type': 'all_players_data', 'data': static_player_data})
+
+        # 3. Terima info dari pemain baru (username & avatar)
         player_info = receive_from_client(conn)
         if player_info is None:
             raise ConnectionAbortedError("Gagal menerima info pemain awal.")
 
         with lock:
+            # Simpan data statis pemain baru
+            static_player_data[player_id] = player_info
+            # Inisialisasi data dinamisnya
             game_state['players'][player_id]['username'] = player_info['username']
-            game_state['players'][player_id]['avatar_data'] = player_info['avatar_data']
-            print(f"[Koneksi] Pemain {player_id} ({player_info['username']}) berhasil bergabung.")
+
+        print(f"[Koneksi] Pemain {player_id} ({player_info['username']}) berhasil bergabung.")
+
+        # 4. Siarkan informasi pemain baru ke semua klien lain
+        broadcast({'type': 'new_player', 'id': player_id, 'data': player_info})
 
         while True:
             inputs = receive_from_client(conn)
             if inputs is None:
-                break
+                break  # Klien terputus
             with lock:
                 player_inputs[player_id] = inputs
 
@@ -104,9 +138,15 @@ def handle_client(conn, player_id):
                         new_it_id = random.choice(remaining)
                         game_state['players'][new_it_id]['is_it'] = True
                         print(f"[Game] {game_state['players'][new_it_id]['username']} sekarang 'It'.")
+
             if player_id in player_inputs: del player_inputs[player_id]
-            if conn in clients: clients.remove(conn)
+            if player_id in clients: del clients[player_id]
+            if player_id in static_player_data: del static_player_data[player_id]
+
+        # Siarkan bahwa pemain ini telah keluar
+        broadcast({'type': 'player_left', 'id': player_id})
         conn.close()
+
 
 def reset_game():
     global game_start_time, last_item_spawn_time, last_score_update_time
@@ -123,7 +163,7 @@ def reset_game():
         player['effect_timer'] = 0
         player['stunned'] = False
         player['score'] = 0
-        player['immunity_timer'] = 0 # Reset kekebalan
+        player['immunity_timer'] = 0  # Reset kekebalan
 
     game_start_time = 0
     last_item_spawn_time = time.time()
@@ -152,7 +192,6 @@ def game_logic_loop():
                     last_score_update_time = game_start_time
                     it_player_id = random.choice(list(game_state['players'].keys()))
                     game_state['players'][it_player_id]['is_it'] = True
-                    # Beri kekebalan awal untuk 'It' pertama
                     game_state['players'][it_player_id]['immunity_timer'] = TAG_IMMUNITY_DURATION
                     print(f"[Game] Game dimulai! {game_state['players'][it_player_id]['username']} adalah 'It'.")
 
@@ -185,7 +224,7 @@ def game_logic_loop():
 
                     it_player_data = None
                     it_player_id = None
-                    
+
                     players_copy = list(game_state['players'].items())
                     for pid, player in players_copy:
                         if pid not in game_state['players']: continue
@@ -194,22 +233,20 @@ def game_logic_loop():
                             it_player_data = player
                             it_player_id = pid
 
-                        # --- PERUBAHAN DI SINI: Hitung mundur semua timer ---
                         if player['effect_timer'] > 0:
                             player['effect_timer'] -= tick_delta
                         else:
                             player['speed'] = PLAYER_SPEED
                             player['stunned'] = False
-                        
+
                         if player['immunity_timer'] > 0:
                             player['immunity_timer'] -= tick_delta
-                        # ---------------------------------------------
 
                         if player['stunned']: continue
 
                         inputs = player_inputs.get(pid, {})
                         move_x, move_y = inputs.get('move_x', 0), inputs.get('move_y', 0)
-                        
+
                         player['pos'][0] += move_x * player['speed']
                         player['pos'][1] += move_y * player['speed']
                         player['pos'][0] = max(PLAYER_RADIUS, min(player['pos'][0], ARENA_WIDTH - PLAYER_RADIUS))
@@ -218,7 +255,7 @@ def game_logic_loop():
                         if inputs.get('use_item') and player['inventory']:
                             item_type = player['inventory']
                             player['inventory'] = None
-                            
+
                             if item_type == 'speed_boost':
                                 player['speed'] = PLAYER_SPEED * 1.8
                                 player['effect_timer'] = ITEM_EFFECT_DURATION['speed_boost']
@@ -227,25 +264,20 @@ def game_logic_loop():
                                     'type': 'banana_peel', 'pos': list(player['pos']),
                                     'id': time.time(), 'spawn_time': time.time()
                                 })
-                    
-                    # --- PERUBAHAN DI SINI: Logika Tag dengan Kekebalan ---
+
                     if it_player_data and it_player_id in game_state['players'] and not it_player_data.get('stunned', False):
                         for pid_other, pdata_other in game_state['players'].items():
-                            # Hanya bisa tag jika target tidak kebal
                             if pid_other != it_player_id and pdata_other.get('immunity_timer', 0) <= 0:
                                 if distance(it_player_data['pos'], pdata_other['pos']) < PLAYER_RADIUS * 2:
                                     print(f"[Game] TAG! {it_player_data['username']} menyentuh {pdata_other['username']}.")
-                                    # Tukar status 'it'
                                     game_state['players'][it_player_id]['is_it'] = False
                                     game_state['players'][pid_other]['is_it'] = True
-                                    
-                                    # Beri kekebalan pada kedua pemain
+
                                     game_state['players'][it_player_id]['immunity_timer'] = TAG_IMMUNITY_DURATION
                                     game_state['players'][pid_other]['immunity_timer'] = TAG_IMMUNITY_DURATION
-                                    
+
                                     game_state['players'][it_player_id]['score'] += 5
                                     break
-                    # ----------------------------------------------------
 
                     items_to_remove = []
                     for item in list(game_state['items']):
@@ -261,7 +293,7 @@ def game_logic_loop():
                                         pdata['effect_timer'] = ITEM_EFFECT_DURATION['stun']
                                         items_to_remove.append(item)
                                         break
-                    
+
                     game_state['items'] = [item for item in game_state['items'] if item not in items_to_remove]
 
                     if time.time() - last_item_spawn_time > ITEM_SPAWN_INTERVAL and len(game_state['items']) < MAX_ITEMS:
@@ -269,14 +301,11 @@ def game_logic_loop():
                         pos = [random.randint(ITEM_RADIUS, ARENA_WIDTH - ITEM_RADIUS), random.randint(ITEM_RADIUS, ARENA_HEIGHT - ITEM_RADIUS)]
                         game_state['items'].append({'type': item_type, 'pos': pos, 'id': time.time()})
                         last_item_spawn_time = time.time()
-
+            
+            # **PERUBAHAN**: Hanya siarkan game_state yang dinamis
             if clients:
-                payload = pickle.dumps(game_state)
-                message = f"{len(payload):<10}".encode() + payload
-                for client_conn in list(clients):
-                    try: client_conn.sendall(message)
-                    except Exception:
-                        if client_conn in clients: clients.remove(client_conn)
+                broadcast({'type': 'game_update', 'state': game_state})
+
 
             elapsed_time = time.time() - start_time
             sleep_time = (1 / SERVER_TICK_RATE) - elapsed_time
@@ -286,6 +315,7 @@ def game_logic_loop():
             print(f"!!--- ERROR FATAL DI GAME LOOP SERVER ---!!")
             traceback.print_exc()
             print(f"!!---------------------------------------!!")
+
 
 def main():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -300,30 +330,31 @@ def main():
     player_id_counter = 0
     while True:
         conn, addr = server.accept()
-        
-        if len(clients) >= MAX_PLAYERS and not any(p for p in game_state['players'].values() if p['username'] == '...'):
+
+        if len(clients) >= MAX_PLAYERS:
             print(f"[Server] Menolak koneksi dari {addr}, server penuh.")
-            try: conn.send("Server penuh".encode())
-            except: pass
+            try:
+                send_to_client(conn, {'type': 'error', 'message': 'Server penuh'})
+            except:
+                pass
             conn.close()
             continue
 
         with lock:
-            clients.append(conn)
+            clients[player_id_counter] = conn
             start_pos = [random.randint(50, 750), random.randint(50, 550)]
-            # --- PERUBAHAN DI SINI: Tambahkan immunity_timer saat pemain dibuat ---
             game_state['players'][player_id_counter] = {
-                'pos': start_pos, 'username': '...', 'avatar_data': None,
+                'pos': start_pos, 'username': '...',
                 'is_it': False, 'inventory': None, 'speed': PLAYER_SPEED,
                 'effect_timer': 0, 'stunned': False, 'score': 0,
-                'immunity_timer': 0 # Status awal kekebalan
+                'immunity_timer': 0
             }
-            # -------------------------------------------------------------
             player_inputs[player_id_counter] = {}
 
         thread = threading.Thread(target=handle_client, args=(conn, player_id_counter))
         thread.start()
         player_id_counter += 1
+
 
 if __name__ == "__main__":
     main()

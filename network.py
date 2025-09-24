@@ -8,22 +8,22 @@ class Network:
         self.server = server_ip
         self.port = server_port
         self.addr = (self.server, self.port)
-        self.player_id = self.connect()
+        self._connected = self.connect()
 
-    def get_player_id(self):
-        return self.player_id
+    def is_connected(self):
+        return self._connected
 
     def connect(self):
         try:
             self.client.connect(self.addr)
-            return self.client.recv(2048).decode()
+            return True
         except socket.error as e:
             print(f"Gagal terhubung ke server: {e}")
-            return None
+            return False
 
     def send(self, data):
         """
-        PERBAIKAN: Mengirim data yang telah di-pickle ke server,
+        Mengirim data yang telah di-pickle ke server,
         selalu dengan header panjang data.
         """
         try:
@@ -32,7 +32,8 @@ class Network:
             message = f"{len(payload):<10}".encode() + payload
             self.client.sendall(message)
         except socket.error as e:
-            print(f"Gagal mengirim data: {e}")
+            # print(f"Gagal mengirim data: {e}") # Bisa di-uncomment untuk debug
+            pass
 
     def receive(self):
         """Menerima data dari server dengan header panjang."""
@@ -45,7 +46,7 @@ class Network:
                 if not chunk: return None
                 header_data += chunk
             
-            msglen = int(header_data.decode())
+            msglen = int(header_data.decode().strip())
 
             # 2. Terima payload berdasarkan panjang dari header
             full_msg = b''
@@ -57,11 +58,14 @@ class Network:
             return pickle.loads(full_msg)
 
         except (EOFError, ConnectionResetError, pickle.UnpicklingError, OSError) as e:
-            print(f"Koneksi terputus atau data korup: {e}")
+            # print(f"Koneksi terputus atau data korup: {e}") # Bisa di-uncomment untuk debug
             return None
         except ValueError:
-            print("Menerima header yang tidak valid dari server.")
+            # print("Menerima header yang tidak valid dari server.") # Bisa di-uncomment untuk debug
             return None
 
     def disconnect(self):
-        self.client.close()
+        try:
+            self.client.close()
+        except socket.error:
+            pass # Socket mungkin sudah ditutup

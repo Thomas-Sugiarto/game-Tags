@@ -4,10 +4,10 @@ import threading
 import pickle
 import os
 import io
-import cv2 # pip install opencv-python
+import cv2  # pip install opencv-python
 import time
 from network import Network
-from server import PLAYER_SPEED
+from server import MAX_PLAYERS, PLAYER_SPEED
 
 # --- Konfigurasi Klien ---
 SERVER_IP = '127.0.0.1'
@@ -41,23 +41,18 @@ FONT_LARGE = None
 
 # --- Fungsi Aset ---
 
-# **FUNGSI BARU: Untuk meng-crop transparansi di sekitar gambar**
 def crop_surface(surface):
     """Secara otomatis meng-crop bagian transparan di sekitar surface."""
     try:
         mask = pygame.mask.from_surface(surface)
         bounding_rect = mask.get_bounding_rects()
         if bounding_rect:
-            # Ambil rect pertama (yang terbesar)
             crop_rect = bounding_rect[0]
-            # Buat surface baru dengan ukuran yang sudah di-crop
             cropped_surface = pygame.Surface(crop_rect.size, pygame.SRCALPHA)
-            # Blit (gambar) hanya bagian yang di-crop dari surface asli
             cropped_surface.blit(surface, (0, 0), crop_rect)
             return cropped_surface
     except (pygame.error, IndexError) as e:
         print(f"Gagal meng-crop surface: {e}")
-    # Kembalikan surface asli jika gagal
     return surface
 
 
@@ -74,7 +69,6 @@ def load_assets():
         FONT_REGULAR = pygame.font.SysFont('Arial', 20)
         FONT_LARGE = pygame.font.SysFont('Arial', 52, bold=True)
 
-
     asset_files = {
         'banana_trap': 'banana.png', 'speed_boost': 'speed_boost.png',
         'banana_peel': 'banana_peel.png', 'background': 'background.png',
@@ -85,15 +79,12 @@ def load_assets():
         try:
             path = os.path.join('assets', filename)
             image = pygame.image.load(path).convert_alpha()
-
-            # **PERBAIKAN: Crop gambar setelah dimuat (kecuali background)**
             if name != 'background':
                 image = crop_surface(image)
-
             if name == 'background':
                 assets[name] = pygame.transform.scale(image, (SCREEN_WIDTH, SCREEN_HEIGHT))
             elif name == 'speed_aura':
-                 assets[name] = pygame.transform.scale(image, (PLAYER_RADIUS * 3, PLAYER_RADIUS * 3))
+                assets[name] = pygame.transform.scale(image, (PLAYER_RADIUS * 3, PLAYER_RADIUS * 3))
             elif name in ['stun_stars']:
                 assets[name] = image
             else:
@@ -101,54 +92,89 @@ def load_assets():
                 assets[name] = pygame.transform.scale(image, size)
         except pygame.error:
             print(f"Gagal memuat aset: {filename}.")
-            assets[name] = pygame.Surface((30,30)); assets[name].fill(RED)
+            assets[name] = pygame.Surface((30, 30)); assets[name].fill(RED)
 
 
 def create_circular_avatar(image_surface, size):
     if not image_surface: return None
     try:
         avatar = pygame.Surface((size, size), pygame.SRCALPHA)
-        # **PERBAIKAN: Pastikan gambar yang di-scale fill lingkaran sepenuhnya**
-        # Ini dilakukan dengan membuat gambar sedikit lebih besar dan memusatkannya
         scaled_img = pygame.transform.scale(image_surface, (size, size))
-
-        # Gambar lingkaran sebagai "wadah"
         pygame.draw.circle(avatar, (255, 255, 255, 0), (size // 2, size // 2), size // 2)
-
-        # Blit gambar ke dalam surface avatar
         img_rect = scaled_img.get_rect(center=(size // 2, size // 2))
         avatar.blit(scaled_img, img_rect)
-
-        # Buat mask lingkaran dan terapkan
         mask_circle = pygame.Surface((size, size), pygame.SRCALPHA)
         pygame.draw.circle(mask_circle, (255, 255, 255, 255), (size // 2, size // 2), size // 2)
         avatar.blit(mask_circle, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-
         return avatar
     except Exception as e:
         print(f"Gagal membuat avatar melingkar: {e}")
         return assets.get('avatar_placeholder')
 
 
+# **FUNGSI BARU**: Memproses data avatar dan menyimpannya
+def process_and_store_avatar(pid, pdata):
+    if pdata and pdata.get('avatar_data'):
+        try:
+            img_bytes = io.BytesIO(pdata['avatar_data'])
+            img_surface = pygame.image.load(img_bytes).convert_alpha()
+            player_avatars[pid] = create_circular_avatar(img_surface, PLAYER_RADIUS * 2)
+        except Exception as e:
+            print(f"Gagal memuat avatar untuk pemain {pid}: {e}")
+            player_avatars[pid] = create_circular_avatar(assets['avatar_placeholder'], PLAYER_RADIUS * 2)
+
 # --- Fungsi Jaringan ---
+# **PERUBAHAN BESAR**: Menangani berbagai jenis pesan dari server
 def receive_data_from_server(network_handler):
-    global latest_game_state, running
+    global latest_game_state, running, my_player_id
     while running:
-        data = network_handler.receive()
-        if data is None:
+        data_packet = network_handler.receive()
+        if data_packet is None:
             print("Koneksi ke server terputus.")
-            running = False; break
+            running = False
+            break
+
+        msg_type = data_packet.get('type')
+
         with lock:
-            latest_game_state = data
-            for pid, pdata in data.get('players', {}).items():
-                if pid not in player_avatars and pdata.get('avatar_data'):
-                    try:
-                        img_bytes = io.BytesIO(pdata['avatar_data'])
-                        img_surface = pygame.image.load(img_bytes).convert_alpha()
-                        player_avatars[pid] = create_circular_avatar(img_surface, PLAYER_RADIUS * 2)
-                    except Exception as e:
-                        print(f"Gagal memuat avatar untuk pemain {pid}: {e}")
-                        player_avatars[pid] = create_circular_avatar(assets['avatar_placeholder'], PLAYER_RADIUS * 2)
+            if msg_type == 'your_id':
+                my_player_id = data_packet['id']
+                print(f"Anda adalah Pemain {my_player_id}.")
+
+            elif msg_type == 'all_players_data':
+                # Terima data semua pemain yang sudah ada saat pertama kali bergabung
+                for pid, pdata in data_packet.get('data', {}).items():
+                    process_and_store_avatar(pid, pdata)
+                    # Tambahkan username ke game state awal
+                    if 'players' not in latest_game_state:
+                        latest_game_state['players'] = {}
+                    if pid not in latest_game_state['players']:
+                         latest_game_state['players'][pid] = {}
+                    latest_game_state['players'][pid]['username'] = pdata.get('username', '...')
+
+            elif msg_type == 'game_update':
+                # Ini adalah pembaruan rutin (posisi, skor, dll)
+                latest_game_state = data_packet['state']
+
+            elif msg_type == 'new_player':
+                # Pemain baru telah bergabung
+                pid = data_packet['id']
+                pdata = data_packet['data']
+                print(f"Pemain baru bergabung: {pdata.get('username', '')} ({pid})")
+                process_and_store_avatar(pid, pdata)
+                # Pastikan pemain ada di state
+                if pid not in latest_game_state.get('players', {}):
+                    latest_game_state['players'][pid] = {'username': pdata.get('username')}
+
+
+            elif msg_type == 'player_left':
+                # Pemain keluar dari game
+                pid = data_packet['id']
+                if pid in latest_game_state.get('players', {}):
+                    print(f"Pemain {latest_game_state['players'][pid].get('username', '')} keluar.")
+                    del latest_game_state['players'][pid]
+                if pid in player_avatars:
+                    del player_avatars[pid]
 
 
 # --- Komponen UI ---
@@ -249,25 +275,34 @@ def avatar_creation(username):
 def game_loop(username, avatar_surface):
     global running, network, my_player_id, latest_game_state
 
+    # **PERUBAHAN**: Hapus pembersihan state lama, karena ditangani oleh thread jaringan
+    player_avatars.clear()
+
     network = Network(SERVER_IP, SERVER_PORT)
-    my_player_id_str = network.get_player_id()
-    if not (my_player_id_str and my_player_id_str.isdigit()):
-        print(f"Gagal terhubung atau server penuh: '{my_player_id_str}'")
+    if not network.is_connected():
+        print("Gagal terhubung ke server.")
         return "menu"
-    my_player_id = int(my_player_id_str)
-    print(f"Anda adalah Pemain {my_player_id}.")
+
+    # Thread jaringan akan mengatur my_player_id
+    receive_thread = threading.Thread(target=receive_data_from_server, args=(network,), daemon=True)
+    receive_thread.start()
+
+    # Tunggu sebentar agar ID pemain diterima
+    time.sleep(0.5)
+    if my_player_id == -1:
+        print("Tidak menerima ID dari server atau server penuh.")
+        network.disconnect()
+        return "menu"
 
     my_avatar = create_circular_avatar(avatar_surface, PLAYER_RADIUS * 2)
     player_avatars[my_player_id] = my_avatar
 
     img_byte_arr = io.BytesIO()
     pygame.image.save(avatar_surface, img_byte_arr, 'PNG')
-    img_byte_arr = img_byte_arr.getvalue()
+    img_byte_arr_val = img_byte_arr.getvalue()
 
-    network.send({'username': username, 'avatar_data': img_byte_arr})
-
-    receive_thread = threading.Thread(target=receive_data_from_server, args=(network,), daemon=True)
-    receive_thread.start()
+    # Kirim informasi pemain ke server
+    network.send({'username': username, 'avatar_data': img_byte_arr_val})
 
     stun_frame = 0
     while running:
@@ -279,7 +314,7 @@ def game_loop(username, avatar_surface):
             if event.type == pygame.QUIT: running = False; break
             if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE: use_item_event = True
 
-        if current_state.get('game_started', False):
+        if current_state and current_state.get('game_started', False):
             keys = pygame.key.get_pressed()
             move_x, move_y = 0, 0
             if keys[pygame.K_w] or keys[pygame.K_UP]: move_y -= 1
@@ -292,12 +327,12 @@ def game_loop(username, avatar_surface):
 
             network.send({'move_x': move_x, 'move_y': move_y, 'use_item': use_item_event})
         else:
-             network.send({})
+             network.send({}) # Tetap kirim paket kosong agar server tahu kita masih hidup
 
         screen.blit(assets['background'], (0,0))
 
         if not current_state:
-            draw_text("Menghubungkan ke server...", FONT_BOLD, WHITE, (SCREEN_WIDTH//2, SCREEN_HEIGHT//2))
+            draw_text("Menghubungkan & menunggu data...", FONT_BOLD, WHITE, (SCREEN_WIDTH//2, SCREEN_HEIGHT//2))
         elif current_state.get('winner'):
             draw_text("Game Selesai!", FONT_LARGE, YELLOW, (SCREEN_WIDTH//2, 150))
             winner_name = current_state.get('winner', 'Tidak ada')
@@ -307,9 +342,10 @@ def game_loop(username, avatar_surface):
         elif not current_state.get('game_started', False):
             draw_text("Menunggu Pemain Lain...", FONT_BOLD, WHITE, (SCREEN_WIDTH//2, 100))
             players = current_state.get('players', {})
-            draw_text(f"{len(players)}/{3}", FONT_REGULAR, WHITE, (SCREEN_WIDTH//2, 150))
+            draw_text(f"{len(players)}/{MAX_PLAYERS}", FONT_REGULAR, WHITE, (SCREEN_WIDTH//2, 150))
 
-            for i, (pid, pdata) in enumerate(players.items()):
+            for i, (pid_str, pdata) in enumerate(players.items()):
+                pid = int(pid_str)
                 y_pos = 250 + i * 80
                 avatar = player_avatars.get(pid)
                 if avatar: screen.blit(avatar, (200, y_pos - PLAYER_RADIUS))
@@ -319,7 +355,8 @@ def game_loop(username, avatar_surface):
                 icon = assets.get(item['type'])
                 if icon: screen.blit(icon, (item['pos'][0] - ITEM_RADIUS, item['pos'][1] - ITEM_RADIUS))
 
-            for pid, pdata in current_state.get('players', {}).items():
+            for pid_str, pdata in current_state.get('players', {}).items():
+                pid = int(pid_str)
                 pos = (int(pdata['pos'][0]), int(pdata['pos'][1]))
                 p_avatar = player_avatars.get(pid)
 
@@ -339,13 +376,12 @@ def game_loop(username, avatar_surface):
                     stun_w, stun_h = assets['stun_stars'].get_size()
                     frame_width = stun_w / 3
                     stun_asset_rect = pygame.Rect(int(stun_frame) * frame_width, 0, frame_width, stun_h)
-                    
+
                     blit_pos_x = pos[0] - frame_width / 2
                     blit_pos_y = pos[1] - PLAYER_RADIUS - stun_h/2 - 5
                     screen.blit(assets['stun_stars'], (blit_pos_x, blit_pos_y), stun_asset_rect)
 
             stun_frame = (stun_frame + 0.2) % 3
-
             draw_hud(current_state)
 
         pygame.display.flip()
@@ -356,7 +392,9 @@ def game_loop(username, avatar_surface):
     return "menu"
 
 def draw_hud(state):
-    my_player_data = state.get('players', {}).get(my_player_id)
+    # **PERUBAHAN**: Konversi my_player_id ke string saat mengakses dict
+    my_player_data = state.get('players', {}).get(str(my_player_id))
+
     if my_player_data:
         inventory_rect = pygame.Rect(10, SCREEN_HEIGHT - 60, 50, 50)
         pygame.draw.rect(screen, TRANSPARENT_GRAY, inventory_rect, border_radius=5)
