@@ -1,4 +1,4 @@
-# client.py
+# client.py (Diperbaiki)
 import pygame
 import threading
 import pickle
@@ -7,7 +7,7 @@ import io
 import cv2  # pip install opencv-python
 import time
 from network import Network
-from server import MAX_PLAYERS, PLAYER_SPEED
+from server import PLAYER_SPEED, MAX_PLAYERS
 
 # --- Konfigurasi Klien ---
 SERVER_IP = '127.0.0.1'
@@ -42,7 +42,6 @@ FONT_LARGE = None
 # --- Fungsi Aset ---
 
 def crop_surface(surface):
-    """Secara otomatis meng-crop bagian transparan di sekitar surface."""
     try:
         mask = pygame.mask.from_surface(surface)
         bounding_rect = mask.get_bounding_rects()
@@ -112,7 +111,6 @@ def create_circular_avatar(image_surface, size):
         return assets.get('avatar_placeholder')
 
 
-# **FUNGSI BARU**: Memproses data avatar dan menyimpannya
 def process_and_store_avatar(pid, pdata):
     if pdata and pdata.get('avatar_data'):
         try:
@@ -124,7 +122,6 @@ def process_and_store_avatar(pid, pdata):
             player_avatars[pid] = create_circular_avatar(assets['avatar_placeholder'], PLAYER_RADIUS * 2)
 
 # --- Fungsi Jaringan ---
-# **PERUBAHAN BESAR**: Menangani berbagai jenis pesan dari server
 def receive_data_from_server(network_handler):
     global latest_game_state, running, my_player_id
     while running:
@@ -142,10 +139,8 @@ def receive_data_from_server(network_handler):
                 print(f"Anda adalah Pemain {my_player_id}.")
 
             elif msg_type == 'all_players_data':
-                # Terima data semua pemain yang sudah ada saat pertama kali bergabung
                 for pid, pdata in data_packet.get('data', {}).items():
                     process_and_store_avatar(pid, pdata)
-                    # Tambahkan username ke game state awal
                     if 'players' not in latest_game_state:
                         latest_game_state['players'] = {}
                     if pid not in latest_game_state['players']:
@@ -153,22 +148,17 @@ def receive_data_from_server(network_handler):
                     latest_game_state['players'][pid]['username'] = pdata.get('username', '...')
 
             elif msg_type == 'game_update':
-                # Ini adalah pembaruan rutin (posisi, skor, dll)
                 latest_game_state = data_packet['state']
 
             elif msg_type == 'new_player':
-                # Pemain baru telah bergabung
                 pid = data_packet['id']
                 pdata = data_packet['data']
                 print(f"Pemain baru bergabung: {pdata.get('username', '')} ({pid})")
                 process_and_store_avatar(pid, pdata)
-                # Pastikan pemain ada di state
                 if pid not in latest_game_state.get('players', {}):
                     latest_game_state['players'][pid] = {'username': pdata.get('username')}
 
-
             elif msg_type == 'player_left':
-                # Pemain keluar dari game
                 pid = data_packet['id']
                 if pid in latest_game_state.get('players', {}):
                     print(f"Pemain {latest_game_state['players'][pid].get('username', '')} keluar.")
@@ -275,7 +265,6 @@ def avatar_creation(username):
 def game_loop(username, avatar_surface):
     global running, network, my_player_id, latest_game_state
 
-    # **PERUBAHAN**: Hapus pembersihan state lama, karena ditangani oleh thread jaringan
     player_avatars.clear()
 
     network = Network(SERVER_IP, SERVER_PORT)
@@ -283,11 +272,9 @@ def game_loop(username, avatar_surface):
         print("Gagal terhubung ke server.")
         return "menu"
 
-    # Thread jaringan akan mengatur my_player_id
     receive_thread = threading.Thread(target=receive_data_from_server, args=(network,), daemon=True)
     receive_thread.start()
 
-    # Tunggu sebentar agar ID pemain diterima
     time.sleep(0.5)
     if my_player_id == -1:
         print("Tidak menerima ID dari server atau server penuh.")
@@ -301,7 +288,6 @@ def game_loop(username, avatar_surface):
     pygame.image.save(avatar_surface, img_byte_arr, 'PNG')
     img_byte_arr_val = img_byte_arr.getvalue()
 
-    # Kirim informasi pemain ke server
     network.send({'username': username, 'avatar_data': img_byte_arr_val})
 
     stun_frame = 0
@@ -327,7 +313,7 @@ def game_loop(username, avatar_surface):
 
             network.send({'move_x': move_x, 'move_y': move_y, 'use_item': use_item_event})
         else:
-             network.send({}) # Tetap kirim paket kosong agar server tahu kita masih hidup
+             network.send({})
 
         screen.blit(assets['background'], (0,0))
 
@@ -344,8 +330,8 @@ def game_loop(username, avatar_surface):
             players = current_state.get('players', {})
             draw_text(f"{len(players)}/{MAX_PLAYERS}", FONT_REGULAR, WHITE, (SCREEN_WIDTH//2, 150))
 
-            for i, (pid_str, pdata) in enumerate(players.items()):
-                pid = int(pid_str)
+            # **PERBAIKAN DI SINI**: Loop menggunakan pid (angka) langsung
+            for i, (pid, pdata) in enumerate(players.items()):
                 y_pos = 250 + i * 80
                 avatar = player_avatars.get(pid)
                 if avatar: screen.blit(avatar, (200, y_pos - PLAYER_RADIUS))
@@ -355,8 +341,8 @@ def game_loop(username, avatar_surface):
                 icon = assets.get(item['type'])
                 if icon: screen.blit(icon, (item['pos'][0] - ITEM_RADIUS, item['pos'][1] - ITEM_RADIUS))
 
-            for pid_str, pdata in current_state.get('players', {}).items():
-                pid = int(pid_str)
+            # **PERBAIKAN DI SINI**: Loop menggunakan pid (angka) langsung
+            for pid, pdata in current_state.get('players', {}).items():
                 pos = (int(pdata['pos'][0]), int(pdata['pos'][1]))
                 p_avatar = player_avatars.get(pid)
 
@@ -392,8 +378,8 @@ def game_loop(username, avatar_surface):
     return "menu"
 
 def draw_hud(state):
-    # **PERUBAHAN**: Konversi my_player_id ke string saat mengakses dict
-    my_player_data = state.get('players', {}).get(str(my_player_id))
+    # **PERBAIKAN DI SINI**: Mengakses dictionary players dengan my_player_id (angka), bukan string.
+    my_player_data = state.get('players', {}).get(my_player_id)
 
     if my_player_data:
         inventory_rect = pygame.Rect(10, SCREEN_HEIGHT - 60, 50, 50)
