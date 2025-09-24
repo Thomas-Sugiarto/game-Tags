@@ -1,4 +1,4 @@
-# client.py (Diperbaiki)
+# client.py (Diperbaiki dengan input IP)
 import pygame
 import threading
 import pickle
@@ -10,7 +10,7 @@ from network import Network
 from server import PLAYER_SPEED, MAX_PLAYERS
 
 # --- Konfigurasi Klien ---
-SERVER_IP = '127.0.0.1'
+# SERVER_IP DIHAPUS DARI SINI, AKAN DIINPUT OLEH PENGGUNA
 SERVER_PORT = 5555
 SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600
 FPS = 60
@@ -197,30 +197,36 @@ class InputBox:
 def main_menu():
     global running, network, my_player_id
     username_box = InputBox(SCREEN_WIDTH//2 - 150, 300, 300, 50)
+    ip_box = InputBox(SCREEN_WIDTH//2 - 150, 400, 300, 50, '127.0.0.1') # Tambahkan input box untuk IP
 
     while running:
         screen.blit(assets['background'], (0,0))
-        draw_text("Tag Arena", FONT_BOLD, WHITE, (SCREEN_WIDTH//2, 150))
+        draw_text("Tag Arena", FONT_BOLD, WHITE, (SCREEN_WIDTH//2, 100))
         draw_text("Masukkan Username:", FONT_REGULAR, WHITE, (SCREEN_WIDTH//2, 260))
+        draw_text("Alamat IP Server:", FONT_REGULAR, WHITE, (SCREEN_WIDTH//2, 370))
+
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False; return "quit"
-            res = username_box.handle_event(event)
-            if res == "enter" and len(username_box.text) > 2:
-                return avatar_creation(username_box.text)
+                running = False; return "quit", None
+            res_user = username_box.handle_event(event)
+            res_ip = ip_box.handle_event(event)
+
+            if (res_user == "enter" or res_ip == "enter") and len(username_box.text) > 2 and len(ip_box.text) > 6:
+                return avatar_creation(username_box.text, ip_box.text)
 
         username_box.draw(screen)
+        ip_box.draw(screen)
         pygame.display.flip()
         clock.tick(FPS)
-    return "quit"
+    return "quit", None
 
-def avatar_creation(username):
+def avatar_creation(username, server_ip):
     global running
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Tidak dapat membuka kamera, menggunakan avatar default.")
-        return game_loop(username, assets['avatar_placeholder'])
+        return game_loop(username, assets['avatar_placeholder'], server_ip)
 
     capture_button = pygame.Rect(SCREEN_WIDTH//2 - 100, 520, 200, 50)
 
@@ -228,7 +234,7 @@ def avatar_creation(username):
         ret, frame = cap.read()
         if not ret:
              print("Gagal mengambil frame dari kamera.")
-             return game_loop(username, assets['avatar_placeholder'])
+             return game_loop(username, assets['avatar_placeholder'], server_ip)
 
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame = cv2.flip(frame, 1)
@@ -254,20 +260,20 @@ def avatar_creation(username):
                 crop_size = min(center_x, center_y)
                 cropped_frame = frame[center_y-crop_size:center_y+crop_size, center_x-crop_size:center_x+crop_size]
                 final_avatar_surface = pygame.surfarray.make_surface(cropped_frame.swapaxes(0, 1))
-                return game_loop(username, final_avatar_surface)
+                return game_loop(username, final_avatar_surface, server_ip)
 
         pygame.display.flip()
         clock.tick(FPS)
 
     cap.release()
-    return "quit"
+    return "quit", None
 
-def game_loop(username, avatar_surface):
+def game_loop(username, avatar_surface, server_ip):
     global running, network, my_player_id, latest_game_state
 
     player_avatars.clear()
 
-    network = Network(SERVER_IP, SERVER_PORT)
+    network = Network(server_ip, SERVER_PORT) # Gunakan IP dari input
     if not network.is_connected():
         print("Gagal terhubung ke server.")
         return "menu"
@@ -418,9 +424,10 @@ def draw_hud(state):
 if __name__ == "__main__":
     load_assets()
     scene_result = "menu"
+    server_ip_from_menu = "127.0.0.1" # Default IP
     while running:
         if scene_result == "menu":
-            scene_result = main_menu()
+            scene_result, server_ip_from_menu = main_menu()
         elif scene_result == "quit":
             running = False
     pygame.quit()
