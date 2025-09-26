@@ -1,4 +1,3 @@
-# network.py
 import socket
 import pickle
 
@@ -22,24 +21,17 @@ class Network:
             return False
 
     def send(self, data):
-        """
-        Mengirim data yang telah di-pickle ke server,
-        selalu dengan header panjang data.
-        """
         try:
             payload = pickle.dumps(data)
-            # Membuat header 10-byte yang berisi panjang payload
             message = f"{len(payload):<10}".encode() + payload
             self.client.sendall(message)
         except socket.error as e:
-            # print(f"Gagal mengirim data: {e}") # Bisa di-uncomment untuk debug
+            print(f"Gagal mengirim data: {e}")
             pass
 
     def receive(self):
-        """Menerima data dari server dengan header panjang."""
         try:
             header_size = 10
-            # 1. Terima header terlebih dahulu
             header_data = b''
             while len(header_data) < header_size:
                 chunk = self.client.recv(header_size - len(header_data))
@@ -48,7 +40,6 @@ class Network:
             
             msglen = int(header_data.decode().strip())
 
-            # 2. Terima payload berdasarkan panjang dari header
             full_msg = b''
             while len(full_msg) < msglen:
                 chunk = self.client.recv(min(msglen - len(full_msg), 4096))
@@ -58,14 +49,14 @@ class Network:
             return pickle.loads(full_msg)
 
         except (EOFError, ConnectionResetError, pickle.UnpicklingError, OSError) as e:
-            # print(f"Koneksi terputus atau data korup: {e}") # Bisa di-uncomment untuk debug
+            print(f"Koneksi terputus atau data korup: {e}") 
             return None
         except ValueError:
-            # print("Menerima header yang tidak valid dari server.") # Bisa di-uncomment untuk debug
+            print("Menerima header yang tidak valid dari server.") 
             return None
 
     def disconnect(self):
         try:
             self.client.close()
         except socket.error:
-            pass # Socket mungkin sudah ditutup
+            pass 

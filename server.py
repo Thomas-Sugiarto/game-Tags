@@ -1,4 +1,4 @@
-# server.py
+
 import socket
 import threading
 import pickle
@@ -6,29 +6,24 @@ import random
 import time
 import traceback
 
-# --- Konfigurasi Server ---
+
 HOST = '0.0.0.0'
 PORT = 5555
 MAX_PLAYERS = 3
 SERVER_TICK_RATE = 30
-GAME_DURATION = 180  # Durasi game 3 menit (dalam detik)
-
-# --- Konfigurasi Game ---
+GAME_DURATION = 180  
 ARENA_WIDTH = 800
 ARENA_HEIGHT = 600
 PLAYER_RADIUS = 25
 ITEM_RADIUS = 15
 PLAYER_SPEED = 4
-TAG_IMMUNITY_DURATION = 3  # Durasi kekebalan setelah di-tag (dalam detik)
+TAG_IMMUNITY_DURATION = 3  
 
-# --- Pengaturan Item ---
 ITEM_TYPES = ['speed_boost', 'banana_trap']
 MAX_ITEMS = 5
 ITEM_SPAWN_INTERVAL = 5
 ITEM_EFFECT_DURATION = {'speed_boost': 5, 'stun': 2}
 BANANA_ARM_TIME = 0.5
-
-# --- Status Game Global ---
 game_state = {
     'players': {},
     'items': [],
@@ -37,10 +32,8 @@ game_state = {
     'winner': None,
     'game_over_timer': 0
 }
-# **PERUBAHAN**: Menyimpan data pemain yang jarang berubah (termasuk avatar)
 static_player_data = {}
 player_inputs = {}
-# **PERUBAHAN**: Menggunakan dictionary untuk mengelola klien {player_id: conn}
 clients = {}
 lock = threading.Lock()
 last_item_spawn_time = time.time()
@@ -50,18 +43,13 @@ game_start_time = 0
 
 def distance(p1, p2):
     return ((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)**0.5
-
-# **FUNGSI BARU**: Mengirim data dengan aman ke satu klien
 def send_to_client(conn, data):
     try:
         payload = pickle.dumps(data)
         message = f"{len(payload):<10}".encode() + payload
         conn.sendall(message)
     except (ConnectionResetError, BrokenPipeError):
-        # Koneksi sudah ditutup oleh klien, akan ditangani di loop utama klien
         pass
-
-# **FUNGSI BARU**: Menyiarkan data ke semua klien yang terhubung
 def broadcast(data):
     with lock:
         for pid, conn in list(clients.items()):
@@ -95,32 +83,24 @@ def handle_client(conn, player_id):
     print(f"[Koneksi] Pemain {player_id} mencoba terhubung...")
 
     try:
-        # 1. Kirim ID pemain baru ke kliennya
         send_to_client(conn, {'type': 'your_id', 'id': player_id})
-
-        # 2. Kirim data semua pemain yang sudah ada ke klien baru
         send_to_client(conn, {'type': 'all_players_data', 'data': static_player_data})
-
-        # 3. Terima info dari pemain baru (username & avatar)
         player_info = receive_from_client(conn)
         if player_info is None:
             raise ConnectionAbortedError("Gagal menerima info pemain awal.")
 
         with lock:
-            # Simpan data statis pemain baru
             static_player_data[player_id] = player_info
-            # Inisialisasi data dinamisnya
             game_state['players'][player_id]['username'] = player_info['username']
 
         print(f"[Koneksi] Pemain {player_id} ({player_info['username']}) berhasil bergabung.")
 
-        # 4. Siarkan informasi pemain baru ke semua klien lain
         broadcast({'type': 'new_player', 'id': player_id, 'data': player_info})
 
         while True:
             inputs = receive_from_client(conn)
             if inputs is None:
-                break  # Klien terputus
+                break  
             with lock:
                 player_inputs[player_id] = inputs
 
@@ -143,7 +123,6 @@ def handle_client(conn, player_id):
             if player_id in clients: del clients[player_id]
             if player_id in static_player_data: del static_player_data[player_id]
 
-        # Siarkan bahwa pemain ini telah keluar
         broadcast({'type': 'player_left', 'id': player_id})
         conn.close()
 
@@ -163,7 +142,7 @@ def reset_game():
         player['effect_timer'] = 0
         player['stunned'] = False
         player['score'] = 0
-        player['immunity_timer'] = 0  # Reset kekebalan
+        player['immunity_timer'] = 0 
 
     game_start_time = 0
     last_item_spawn_time = time.time()
@@ -302,7 +281,6 @@ def game_logic_loop():
                         game_state['items'].append({'type': item_type, 'pos': pos, 'id': time.time()})
                         last_item_spawn_time = time.time()
             
-            # **PERUBAHAN**: Hanya siarkan game_state yang dinamis
             if clients:
                 broadcast({'type': 'game_update', 'state': game_state})
 

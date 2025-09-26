@@ -4,32 +4,24 @@ import threading
 import pickle
 import os
 import io
-import cv2  # pip install opencv-python
+import cv2 
 import time
 from network import Network
 from server import PLAYER_SPEED, MAX_PLAYERS
 
-# --- Konfigurasi Klien ---
-# SERVER_IP DIHAPUS DARI SINI, AKAN DIINPUT OLEH PENGGUNA
 SERVER_PORT = 5555
 SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600
 FPS = 60
 PLAYER_RADIUS = 25
 ITEM_RADIUS = 15
-
-# --- Warna ---
 WHITE, BLACK, RED, BLUE, YELLOW, GRAY, GREEN = (255, 255, 255), (0, 0, 0), (255, 0, 0), (0, 0, 255), (255, 255, 0), (150, 150, 150), (40, 150, 50)
 TRANSPARENT_GRAY = (50, 50, 50, 180)
-
-# --- Status Klien Global ---
 latest_game_state = {}
 running = True
 lock = threading.Lock()
 player_avatars = {}
 my_player_id = -1
 network = None
-
-# --- Inisialisasi ---
 pygame.init()
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("Tag Arena Multiplayer")
@@ -38,8 +30,6 @@ assets = {}
 FONT_BOLD = None
 FONT_REGULAR = None
 FONT_LARGE = None
-
-# --- Fungsi Aset ---
 
 def crop_surface(surface):
     try:
@@ -121,7 +111,6 @@ def process_and_store_avatar(pid, pdata):
             print(f"Gagal memuat avatar untuk pemain {pid}: {e}")
             player_avatars[pid] = create_circular_avatar(assets['avatar_placeholder'], PLAYER_RADIUS * 2)
 
-# --- Fungsi Jaringan ---
 def receive_data_from_server(network_handler):
     global latest_game_state, running, my_player_id
     while running:
@@ -166,8 +155,6 @@ def receive_data_from_server(network_handler):
                 if pid in player_avatars:
                     del player_avatars[pid]
 
-
-# --- Komponen UI ---
 def draw_text(text, font, color, center_pos):
     render = font.render(text, True, color)
     rect = render.get_rect(center=center_pos)
@@ -192,12 +179,10 @@ class InputBox:
         pygame.draw.rect(screen, WHITE, self.rect)
         screen.blit(self.txt_surface, (self.rect.x + 10, self.rect.y + 10))
         pygame.draw.rect(screen, BLACK, self.rect, 2)
-
-# --- Adegan Game ---
 def main_menu():
     global running, network, my_player_id
     username_box = InputBox(SCREEN_WIDTH//2 - 150, 300, 300, 50)
-    ip_box = InputBox(SCREEN_WIDTH//2 - 150, 400, 300, 50, '127.0.0.1') # Tambahkan input box untuk IP
+    ip_box = InputBox(SCREEN_WIDTH//2 - 150, 400, 300, 50, '127.0.0.1') 
 
     while running:
         screen.blit(assets['background'], (0,0))
@@ -273,7 +258,7 @@ def game_loop(username, avatar_surface, server_ip):
 
     player_avatars.clear()
 
-    network = Network(server_ip, SERVER_PORT) # Gunakan IP dari input
+    network = Network(server_ip, SERVER_PORT)
     if not network.is_connected():
         print("Gagal terhubung ke server.")
         return "menu"
@@ -335,8 +320,6 @@ def game_loop(username, avatar_surface, server_ip):
             draw_text("Menunggu Pemain Lain...", FONT_BOLD, WHITE, (SCREEN_WIDTH//2, 100))
             players = current_state.get('players', {})
             draw_text(f"{len(players)}/{MAX_PLAYERS}", FONT_REGULAR, WHITE, (SCREEN_WIDTH//2, 150))
-
-            # **PERBAIKAN DI SINI**: Loop menggunakan pid (angka) langsung
             for i, (pid, pdata) in enumerate(players.items()):
                 y_pos = 250 + i * 80
                 avatar = player_avatars.get(pid)
@@ -346,8 +329,6 @@ def game_loop(username, avatar_surface, server_ip):
             for item in current_state.get('items',[]):
                 icon = assets.get(item['type'])
                 if icon: screen.blit(icon, (item['pos'][0] - ITEM_RADIUS, item['pos'][1] - ITEM_RADIUS))
-
-            # **PERBAIKAN DI SINI**: Loop menggunakan pid (angka) langsung
             for pid, pdata in current_state.get('players', {}).items():
                 pos = (int(pdata['pos'][0]), int(pdata['pos'][1]))
                 p_avatar = player_avatars.get(pid)
@@ -384,7 +365,6 @@ def game_loop(username, avatar_surface, server_ip):
     return "menu"
 
 def draw_hud(state):
-    # **PERBAIKAN DI SINI**: Mengakses dictionary players dengan my_player_id (angka), bukan string.
     my_player_data = state.get('players', {}).get(my_player_id)
 
     if my_player_data:
@@ -419,12 +399,10 @@ def draw_hud(state):
 
     screen.blit(scoreboard_surf, (SCREEN_WIDTH - 210, 10))
 
-
-# --- Main Execution ---
 if __name__ == "__main__":
     load_assets()
     scene_result = "menu"
-    server_ip_from_menu = "127.0.0.1" # Default IP
+    server_ip_from_menu = "127.0.0.1"
     while running:
         if scene_result == "menu":
             scene_result, server_ip_from_menu = main_menu()
